@@ -439,4 +439,5 @@ def main():
                             'args': [[None], {
                                 'frame': {'duration': 0, 'redraw': False},
                                 'mode': 'immediate',
-                                'transition': {'duration': 0
+                                'transition': {'duration': 0}
+                            }}}])
