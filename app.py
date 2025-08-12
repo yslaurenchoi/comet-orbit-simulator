@@ -440,4 +440,4 @@ def main():
                                 'frame': {'duration': 0, 'redraw': False},
                                 'mode': 'immediate',
                                 'transition': {'duration': 0}
-                            }}}])
+                            }]}}])
