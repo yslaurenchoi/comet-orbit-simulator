@@ -1,30 +1,4 @@
-st.markdown("""
-    이 시뮬레이션은 **물리학적으로 정확한** 혜성의 질량 소실 과정을 보여줍니다.
-    
-    🔬 **물리학적 특징:**
-    - **모든 궤도 타입 지원**: 원, 타원, 포물선, 쌍곡선 궤도
-    - **수학적 정확성**: 각 이심률에 맞는 정확한 궤도 계산
-    - **궤도는 질량 소실과 무관하게 일정합니다** (케플러 법칙)
-    - 질량이 0이 되면 혜성이 완전히 소멸됩니다
-    - 궤도 변화는 질량 자체가 아닌 **비등방적 가스 분출**에 의해 발생합니다
-    
-    📝 **개선사항:**
-    - 이심률 범위 확장 (0~2): 모든 원추곡선 궤도 지원
-    - 질량소실률 범위 축소: 더 현실적인 값 (10¹~10⁵ kg/s)
-    - 자동 시뮬레이션 기간 설정: 예상 생존시간에 맞춰 조정
-    - 포물선/쌍곡선 궤도를 위한 특별 방정식 구현
-    
-    🌌 **궤도 타입별 특징:**
-    - **e = 0**: 완전한 원궤도
-    - **0 < e < 1**: 타원궤도 (주기적)
-    - **e = 1**: 포물선궤도 (탈출 속도)
-    - **e > 1**: 쌍곡선궤도 (초과 속도)
-    
-    **제한사항:**
-    - 이체 문제로 단순화 (다른 행성의 영향 무시)
-    - 상대론적 효과 무시
-    - 가스 분출에 의한 반작용력 미포함
-    """)import streamlit as st
+import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -53,7 +27,7 @@ class CometOrbitSimulator:
         Parameters:
         - star_mass: 항성 질량 (태양질량 단위)
         - comet_mass: 혜성 초기 질량 (kg)
-        - eccentricity: 이심률 (0-1) - 고정값
+        - eccentricity: 이심률 (0-2) - 고정값
         - semi_major_axis: 긴반지름 (AU) - 고정값
         - mass_loss_rate: 질량 소실률 (kg/s)
         """
@@ -272,6 +246,27 @@ def main():
     
     st.sidebar.markdown(f"**궤도 타입:** {orbit_type}")
     
+    # 긴반지름 (AU, 고정값)
+    semi_major_axis = st.sidebar.slider(
+        "긴반지름 (AU)",
+        min_value=0.1,
+        max_value=10.0,
+        value=2.0,
+        step=0.1,
+        help="궤도의 긴반지름을 천문단위(AU)로 입력하세요. (시뮬레이션 중 변하지 않음)"
+    )
+    
+    # 질량 소실률 (kg/s) - 더 작은 범위
+    mass_loss_exp = st.sidebar.slider(
+        "질량 소실률 (10^x kg/s)",
+        min_value=1,
+        max_value=5,
+        value=3,
+        step=0.5,
+        help="혜성이 초당 잃는 질량을 10의 거듭제곱으로 설정하세요."
+    )
+    mass_loss_rate = 10**mass_loss_exp
+    
     # 쌍곡선/포물선 궤도 경고
     if eccentricity >= 1:
         st.sidebar.warning("⚠️ e≥1: 비주기 궤도 (무한대로 날아감)")
@@ -292,27 +287,6 @@ def main():
         value=sim_years_default,
         help="시뮬레이션할 기간을 년 단위로 설정하세요. (예상 생존시간에 맞춰 자동 조정됨)"
     )
-    
-    # 긴반지름 (AU, 고정값)
-    semi_major_axis = st.sidebar.slider(
-        "긴반지름 (AU, 고정)",
-        min_value=0.1,
-        max_value=10.0,
-        value=2.0,
-        step=0.1,
-        help="궤도의 긴반지름을 천문단위(AU)로 입력하세요. (시뮬레이션 중 변하지 않음)"
-    )
-    
-    # 질량 소실률 (kg/s) - 더 작은 범위
-    mass_loss_exp = st.sidebar.slider(
-        "질량 소실률 (10^x kg/s)",
-        min_value=1,
-        max_value=5,
-        value=3,
-        step=0.5,
-        help="혜성이 초당 잃는 질량을 10의 거듭제곱으로 설정하세요."
-    )
-    mass_loss_rate = 10**mass_loss_exp
     
     # 혜성 생존 시간 예측
     estimated_lifetime = comet_mass / mass_loss_rate / YEAR
@@ -381,8 +355,8 @@ def main():
                 x=x_pos, y=y_pos,
                 mode='lines',
                 line=dict(color='lightblue', width=2),
-                name='궤도 경로 (고정)',
-                hovertemplate='고정 궤도 경로<extra></extra>'
+                name='궤도 경로',
+                hovertemplate='궤도 경로<extra></extra>'
             ))
             
             # 혜성 위치 (애니메이션)
@@ -465,168 +439,4 @@ def main():
                             'args': [[None], {
                                 'frame': {'duration': 0, 'redraw': False},
                                 'mode': 'immediate',
-                                'transition': {'duration': 0}
-                            }]
-                        }
-                    ]
-                }]
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("📈 변화 분석")
-            
-            # 이심률 고정값 표시
-            fig_ecc = go.Figure()
-            fig_ecc.add_trace(go.Scatter(
-                x=[t/YEAR for t in times],
-                y=[eccentricity] * len(times),
-                mode='lines',
-                name='이심률',
-                line=dict(color='green', width=3)
-            ))
-            fig_ecc.update_layout(
-                title=f"이심률: {eccentricity:.3f} ({orbit_type})",
-                xaxis_title="시간 (년)",
-                yaxis_title="이심률",
-                height=300,
-                showlegend=False
-            )
-            st.plotly_chart(fig_ecc, use_container_width=True)
-            
-            # 질량 변화 그래프
-            fig_mass = go.Figure()
-            fig_mass.add_trace(go.Scatter(
-                x=[t/YEAR for t in times],
-                y=masses,
-                mode='lines',
-                name='질량',
-                line=dict(color='red', width=3)
-            ))
-            fig_mass.update_layout(
-                title="혜성 질량 변화",
-                xaxis_title="시간 (년)",
-                yaxis_title="질량 (kg)",
-                height=300,
-                showlegend=False
-            )
-            st.plotly_chart(fig_mass, use_container_width=True)
-        
-        # 시뮬레이션 결과 요약
-        st.subheader("📊 시뮬레이션 결과 요약")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(
-                "궤도 이심률",
-                f"{eccentricity:.3f}",
-                orbit_type
-            )
-        
-        with col2:
-            st.metric(
-                "최종 질량",
-                f"{masses[-1]:.2e} kg",
-                f"{masses[-1] - comet_mass:.2e} kg"
-            )
-        
-        with col3:
-            mass_loss_percent = (comet_mass - masses[-1]) / comet_mass * 100
-            st.metric(
-                "질량 소실률",
-                f"{mass_loss_percent:.1f}%"
-            )
-        
-        with col4:
-            actual_sim_time = times[-1] / YEAR
-            st.metric(
-                "실제 시뮬레이션 시간",
-                f"{actual_sim_time:.1f} 년"
-            )
-        
-        # 물리학적 해석
-        st.subheader("🔬 물리학적 해석")
-        
-        if eccentricity >= 1:
-            # 비주기 궤도
-            interpretation = f"""
-            **🌌 {orbit_type} 궤도:**
-            - 이심률: {eccentricity:.3f} (e≥1)
-            - 이 궤도는 주기적이지 않으며, 혜성은 항성에 한 번 접근한 후 무한대로 멀어집니다.
-            - 포물선(e=1) 또는 쌍곡선(e>1) 궤도입니다.
-            
-            **질량 소실:**
-            - 혜성이 {(comet_mass - masses[-1]) / comet_mass * 100:.1f}%의 질량을 잃었습니다.
-            - 궤도 형태는 질량 소실과 무관하게 일정합니다.
-            - 실제로는 태양계를 벗어나면서 질량 소실이 급격히 줄어듭니다.
-            """
-        elif simulator.is_extinct:
-            interpretation = f"""
-            **🔥 혜성 완전 소멸 ({orbit_type}):**
-            - 혜성이 {simulator.extinction_time/YEAR:.1f}년 후 완전히 소멸되었습니다.
-            - 총 {mass_loss_percent:.1f}%의 질량을 잃고 사라졌습니다.
-            - **궤도는 소멸 순간까지 일정하게 유지되었습니다.**
-            
-            **물리학적 의미:**
-            - 질량이 0이 되면 물체가 존재하지 않으므로 궤도 운동도 불가능합니다.
-            - 혜성의 질량 소실 자체는 궤도 형태를 변화시키지 않습니다.
-            - 실제 혜성에서 궤도 변화는 비등방적 가스 분출에 의한 반작용력 때문입니다.
-            """
-        else:
-            interpretation = f"""
-            **질량 소실 과정 ({orbit_type}):**
-            - 혜성이 {mass_loss_percent:.1f}%의 질량을 잃었습니다.
-            - **궤도는 전혀 변하지 않고 일정하게 유지되었습니다.**
-            - 이는 물리학적으로 정확한 결과입니다.
-            
-            **현재 상태:**
-            - 혜성은 아직 존재하며 동일한 궤도에서 운동을 계속합니다.
-            - 현재 질량: {masses[-1]:.2e} kg
-            - 궤도 이심률: {eccentricity:.3f} (변화 없음)
-            """
-        
-        st.markdown(interpretation)
-    
-    # 도움말 섹션
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📚 도움말")
-    st.sidebar.markdown("""
-    **매개변수 설명:**
-    - **항성 질량**: 중심별의 질량 (태양 = 1.0)
-    - **혜성 질량**: 혜성의 초기 질량 (일반적으로 10¹²kg)
-    - **이심률**: 0=원궤도, 1에 가까울수록 타원궤도 (고정)
-    - **긴반지름**: 궤도 타원의 가장 긴 반지름 (고정)
-    - **질량 소실률**: 혜성이 초당 잃는 질량
-    
-    **물리학적 기반:**
-    - 케플러 궤도역학 사용
-    - 궤도는 질량 소실과 무관하게 일정
-    - 질량이 0이 되면 혜성 소멸
-    """)
-    
-    # 정보 섹션
-    st.markdown("---")
-    st.markdown("### ℹ️ 시뮬레이션 정보")
-    st.markdown("""
-    이 시뮬레이션은 **물리학적으로 정확한** 혜성의 질량 소실 과정을 보여줍니다.
-    
-    🔬 **물리학적 특징:**
-    - **궤도는 질량 소실과 무관하게 일정합니다** (케플러 법칙)
-    - 질량이 0이 되면 혜성이 완전히 소멸됩니다
-    - 궤도 변화는 질량 자체가 아닌 **비등방적 가스 분출**에 의해 발생합니다
-    
-    📝 **수정사항:**
-    - 비과학적인 "질량 소실 → 궤도 변화" 로직 제거
-    - 궤도 매개변수(이심률, 긴반지름) 고정
-    - 물리학적으로 정확한 시뮬레이션 구현
-    
-    **제한사항:**
-    - 이체 문제로 단순화 (다른 행성의 영향 무시)
-    - 상대론적 효과 무시
-    - 가스 분출에 의한 반작용력 미포함
-    """)
-
-if __name__ == "__main__":
-    main()
+                                'transition': {'duration': 0
