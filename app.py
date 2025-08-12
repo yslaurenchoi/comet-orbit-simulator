@@ -19,7 +19,7 @@ M_sun = 1.989e30  # 태양질량 (kg)
 YEAR = 365.25 * 24 * 3600  # 1년 (초)
 
 class CometOrbitSimulator:
-    def __init__(self, star_mass, comet_mass, initial_eccentricity, 
+    def __init__(self, star_mass, comet_mass, eccentricity, 
                  semi_major_axis, mass_loss_rate):
         """
         혜성 궤도 시뮬레이터 초기화
@@ -27,73 +27,60 @@ class CometOrbitSimulator:
         Parameters:
         - star_mass: 항성 질량 (태양질량 단위)
         - comet_mass: 혜성 초기 질량 (kg)
-        - initial_eccentricity: 초기 이심률 (0-1)
-        - semi_major_axis: 긴반지름 (AU)
+        - eccentricity: 이심률 (0-2: 0=원, 0<e<1=타원, e=1=포물선, e>1=쌍곡선)
+        - semi_major_axis: 긴반지름 (AU) - 타원 궤도일 때만 적용
         - mass_loss_rate: 질량 소실률 (kg/s)
         """
         self.star_mass = star_mass * M_sun
         self.initial_comet_mass = comet_mass
         self.current_comet_mass = comet_mass
-        self.initial_eccentricity = initial_eccentricity
-        self.current_eccentricity = initial_eccentricity
+        self.eccentricity = eccentricity
         self.semi_major_axis = semi_major_axis * AU
         self.mass_loss_rate = mass_loss_rate
-        self.is_extinct = False  # 혜성 소멸 여부
-        self.extinction_time = None  # 소멸 시간
+        self.is_extinct = False
+        self.extinction_time = None
         
-        # 궤도 주기 계산 (케플러 제3법칙)
-        self.orbital_period = 2 * np.pi * np.sqrt(self.semi_major_axis**3 / (G * self.star_mass))
-        
-    def calculate_orbital_velocity(self, r):
-        """주어진 거리에서의 궤도 속도 계산"""
-        return np.sqrt(G * self.star_mass * (2/r - 1/self.semi_major_axis))
-    
-    def calculate_mass_loss_effect(self, time_step, current_time):
-        """질량 소실이 궤도에 미치는 영향 계산"""
-        if self.is_extinct:
-            return 0  # 이미 소멸된 경우
-        
-        # 질량 소실량 계산
-        mass_loss = self.mass_loss_rate * time_step
-        
-        # 질량이 0 이하로 떨어지는지 확인
-        if self.current_comet_mass - mass_loss <= 0:
-            self.current_comet_mass = 0
-            self.is_extinct = True
-            self.extinction_time = current_time
-            return 0
-        
-        self.current_comet_mass -= mass_loss
-        
-        # 질량 소실에 따른 궤도 변화
-        mass_ratio = self.current_comet_mass / self.initial_comet_mass
-        
-        # 이심률 증가 (질량 소실로 인한 궤도 불안정성)
-        eccentricity_increase = (1 - mass_ratio) * 0.1
-        self.current_eccentricity = min(0.99, self.initial_eccentricity + eccentricity_increase)
-        
-        # 긴반지름 변화 (미세한 궤도 확장)
-        self.semi_major_axis *= (1 + (1 - mass_ratio) * 0.001)
-        
-        return mass_ratio
+        # 궤도 타입 결정
+        if eccentricity < 1.0:
+            self.orbit_type = "타원"
+            # 케플러 제3법칙으로 궤도 주기 계산
+            self.orbital_period = 2 * np.pi * np.sqrt(self.semi_major_axis**3 / (G * self.star_mass))
+        elif eccentricity == 1.0:
+            self.orbit_type = "포물선"
+            self.orbital_period = np.inf  # 무한대
+        else:
+            self.orbit_type = "쌍곡선"
+            self.orbital_period = np.inf  # 무한대
     
     def get_orbital_position(self, time):
-        """주어진 시간에서의 궤도 위치 계산"""
+        """주어진 시간에서의 궤도 위치 계산 (수학적으로 정확한 케플러 궤도)"""
         if self.is_extinct:
-            return None, None, None  # 소멸된 혜성은 위치가 없음
+            return None, None, None
         
-        # 평균 근점 이상 (Mean Anomaly)
+        if self.eccentricity < 1.0:
+            # 타원 궤도
+            return self._elliptical_orbit_position(time)
+        elif self.eccentricity == 1.0:
+            # 포물선 궤도
+            return self._parabolic_orbit_position(time)
+        else:
+            # 쌍곡선 궤도
+            return self._hyperbolic_orbit_position(time)
+    
+    def _elliptical_orbit_position(self, time):
+        """타원 궤도 위치 계산"""
+        # 평균 근점 이상
         mean_anomaly = 2 * np.pi * time / self.orbital_period
         
-        # 이심 근점 이상 (Eccentric Anomaly) - 뉴턴 방법으로 해결
-        eccentric_anomaly = self.solve_kepler_equation(mean_anomaly, self.current_eccentricity)
+        # 이심 근점 이상 (뉴턴 방법으로 해결)
+        eccentric_anomaly = self._solve_kepler_equation(mean_anomaly, self.eccentricity)
         
-        # 참 근점 이상 (True Anomaly)
-        true_anomaly = 2 * np.arctan(np.sqrt((1 + self.current_eccentricity) / (1 - self.current_eccentricity)) * 
+        # 참 근점 이상
+        true_anomaly = 2 * np.arctan(np.sqrt((1 + self.eccentricity) / (1 - self.eccentricity)) * 
                                      np.tan(eccentric_anomaly / 2))
         
         # 궤도 반지름
-        r = self.semi_major_axis * (1 - self.current_eccentricity**2) / (1 + self.current_eccentricity * np.cos(true_anomaly))
+        r = self.semi_major_axis * (1 - self.eccentricity**2) / (1 + self.eccentricity * np.cos(true_anomaly))
         
         # 직교 좌표계로 변환
         x = r * np.cos(true_anomaly)
@@ -101,8 +88,57 @@ class CometOrbitSimulator:
         
         return x, y, r
     
-    def solve_kepler_equation(self, mean_anomaly, eccentricity, tolerance=1e-10):
-        """케플러 방정식을 뉴턴 방법으로 해결"""
+    def _parabolic_orbit_position(self, time):
+        """포물선 궤도 위치 계산"""
+        # 포물선 궤도의 경우 근일점 거리를 사용
+        periapsis_distance = self.semi_major_axis * AU  # AU를 미터로 변환
+        
+        # 평균 운동 계산
+        n = np.sqrt(G * self.star_mass / (2 * periapsis_distance**3))
+        
+        # 바커 방정식 해결 (근사해)
+        M = n * time
+        D = np.cbrt(3 * M + np.sqrt(9 * M**2 + 8))
+        true_anomaly = 2 * np.arctan(D - 2/D)
+        
+        # 궤도 반지름
+        r = periapsis_distance * (1 + np.cos(true_anomaly))
+        
+        # 직교 좌표계로 변환
+        x = r * np.cos(true_anomaly)
+        y = r * np.sin(true_anomaly)
+        
+        return x, y, r
+    
+    def _hyperbolic_orbit_position(self, time):
+        """쌍곡선 궤도 위치 계산"""
+        # 쌍곡선 궤도의 경우 근일점 거리 사용
+        periapsis_distance = self.semi_major_axis * AU
+        
+        # 평균 운동 계산 (쌍곡선 궤도)
+        n = np.sqrt(G * self.star_mass / (-self.semi_major_axis * AU)**3)
+        
+        # 평균 근점 이상
+        mean_anomaly = n * time
+        
+        # 쌍곡선 케플러 방정식 해결
+        hyperbolic_anomaly = self._solve_hyperbolic_kepler_equation(mean_anomaly, self.eccentricity)
+        
+        # 참 근점 이상
+        true_anomaly = 2 * np.arctan(np.sqrt((self.eccentricity + 1) / (self.eccentricity - 1)) * 
+                                     np.tanh(hyperbolic_anomaly / 2))
+        
+        # 궤도 반지름
+        r = abs(self.semi_major_axis) * AU * (self.eccentricity**2 - 1) / (1 + self.eccentricity * np.cos(true_anomaly))
+        
+        # 직교 좌표계로 변환
+        x = r * np.cos(true_anomaly)
+        y = r * np.sin(true_anomaly)
+        
+        return x, y, r
+    
+    def _solve_kepler_equation(self, mean_anomaly, eccentricity, tolerance=1e-10):
+        """타원 궤도 케플러 방정식을 뉴턴 방법으로 해결"""
         eccentric_anomaly = mean_anomaly
         
         for _ in range(100):
@@ -114,57 +150,76 @@ class CometOrbitSimulator:
         
         return eccentric_anomaly
     
+    def _solve_hyperbolic_kepler_equation(self, mean_anomaly, eccentricity, tolerance=1e-10):
+        """쌍곡선 궤도 케플러 방정식을 뉴턴 방법으로 해결"""
+        hyperbolic_anomaly = mean_anomaly
+        
+        for _ in range(100):
+            f = eccentricity * np.sinh(hyperbolic_anomaly) - hyperbolic_anomaly - mean_anomaly
+            if abs(f) < tolerance:
+                break
+            df = eccentricity * np.cosh(hyperbolic_anomaly) - 1
+            hyperbolic_anomaly = hyperbolic_anomaly - f / df
+        
+        return hyperbolic_anomaly
+    
+    def update_mass(self, time_step):
+        """질량만 업데이트 (궤도에는 영향 없음)"""
+        if self.is_extinct:
+            return
+        
+        mass_loss = self.mass_loss_rate * time_step
+        
+        if self.current_comet_mass - mass_loss <= 0:
+            self.current_comet_mass = 0
+            self.is_extinct = True
+            return
+        
+        self.current_comet_mass -= mass_loss
+    
     def generate_orbit_data(self, total_time, time_steps):
         """전체 궤도 데이터 생성"""
         times = np.linspace(0, total_time, time_steps)
         positions = []
-        eccentricities = []
         masses = []
         
         for i, t in enumerate(times):
             if i > 0:
-                # 질량 소실 효과 적용
                 time_step = times[i] - times[i-1]
-                mass_ratio = self.calculate_mass_loss_effect(time_step, t)
+                self.update_mass(time_step)
             
-            # 현재 위치 계산
-            x, y, r = self.get_orbital_position(t)
-            
-            if self.is_extinct and x is None:
-                # 혜성이 소멸된 경우 시뮬레이션 종료
+            if self.is_extinct:
                 break
             
-            positions.append((x, y))
-            eccentricities.append(self.current_eccentricity)
-            masses.append(self.current_comet_mass)
+            x, y, r = self.get_orbital_position(t)
+            
+            if x is not None:
+                positions.append((x, y))
+                masses.append(self.current_comet_mass)
+            else:
+                break
         
-        # 실제 시뮬레이션된 시간만 반환
         actual_times = times[:len(positions)]
-        
-        return actual_times, positions, eccentricities, masses
+        return actual_times, positions, masses
 
 def main():
-    # 타이틀과 설명
     st.title("🌟 혜성 궤도 시뮬레이터")
-    st.markdown("혜성의 질량 소실이 궤도에 미치는 영향을 시뮬레이션합니다.")
+    st.markdown("혜성의 케플러 궤도와 질량 소실을 시뮬레이션합니다.")
     
-    # 사이드바 - 입력 매개변수
+    # 사이드바 매개변수
     st.sidebar.header("🔧 시뮬레이션 매개변수")
     
-    # 기본값 설정 섹션
-    st.sidebar.markdown("### 기본 설정")
-    
-    # 항성 질량 (태양질량 단위)
+    # 항성 질량
     star_mass = st.sidebar.slider(
         "항성 질량 (태양질량 단위)",
         min_value=0.1,
         max_value=5.0,
         value=1.0,
         step=0.1,
-        help="항성의 질량을 태양질량 단위로 입력하세요. 태양 = 1.0"
+        help="항성의 질량을 태양질량 단위로 입력하세요."
     )
     
-    # 혜성 초기 질량 (kg)
+    # 혜성 초기 질량
     comet_mass_exp = st.sidebar.slider(
         "혜성 초기 질량 (10^x kg)",
         min_value=10,
@@ -175,84 +230,94 @@ def main():
     )
     comet_mass = 10**comet_mass_exp
     
-    # 초기 이심률
-    initial_eccentricity = st.sidebar.slider(
-        "초기 궤도 이심률",
+    # 궤도 이심률 (0-2)
+    eccentricity = st.sidebar.slider(
+        "궤도 이심률",
         min_value=0.0,
-        max_value=0.99,
+        max_value=2.0,
         value=0.5,
         step=0.01,
-        help="0: 완전한 원궤도, 1에 가까울수록 매우 긴 타원궤도"
+        help="0=원궤도, 0<e<1=타원, e=1=포물선, e>1=쌍곡선"
     )
     
-    # 긴반지름 (AU)
+    # 이심률에 따른 궤도 타입 표시
+    if eccentricity < 1.0:
+        orbit_type = "타원 궤도"
+        orbit_color = "green"
+    elif eccentricity == 1.0:
+        orbit_type = "포물선 궤도"
+        orbit_color = "orange"
+    else:
+        orbit_type = "쌍곡선 궤도"
+        orbit_color = "red"
+    
+    st.sidebar.markdown(f"**궤도 타입:** :{orbit_color}[{orbit_type}]")
+    
+    # 긴반지름/근일점 거리
+    if eccentricity < 1.0:
+        distance_label = "긴반지름 (AU)"
+        distance_help = "타원 궤도의 긴반지름"
+    else:
+        distance_label = "근일점 거리 (AU)"
+        distance_help = "포물선/쌍곡선 궤도의 근일점 거리"
+    
     semi_major_axis = st.sidebar.slider(
-        "긴반지름 (AU)",
+        distance_label,
         min_value=0.1,
         max_value=10.0,
         value=2.0,
         step=0.1,
-        help="궤도의 긴반지름을 천문단위(AU)로 입력하세요. 지구-태양 거리 = 1AU"
+        help=distance_help
     )
     
-    # 질량 소실률 (kg/s)
+    # 질량 소실률 (더 작은 범위)
     mass_loss_exp = st.sidebar.slider(
         "질량 소실률 (10^x kg/s)",
-        min_value=3,
-        max_value=8,
-        value=6,
+        min_value=1,
+        max_value=6,
+        value=4,
         step=1,
-        help="혜성이 초당 잃는 질량을 10의 거듭제곱으로 설정하세요."
+        help="혜성이 초당 잃는 질량 (더 작은 범위)"
     )
     mass_loss_rate = 10**mass_loss_exp
     
-    # 시뮬레이션 시간 설정
-    st.sidebar.markdown("### 시뮬레이션 설정")
-    sim_years = st.sidebar.slider(
-        "시뮬레이션 기간 (년)",
-        min_value=1,
-        max_value=100,
-        value=10,
-        help="시뮬레이션할 기간을 년 단위로 설정하세요."
-    )
+    # 예상 생존시간 계산 및 자동 시뮬레이션 기간 설정
+    estimated_lifetime_years = comet_mass / mass_loss_rate / YEAR
+    auto_sim_years = min(max(estimated_lifetime_years * 1.2, 1), 200)  # 생존시간의 120%, 최소 1년, 최대 200년
     
-    # 혜성 생존 시간 예측
-    estimated_lifetime = comet_mass / mass_loss_rate / YEAR
-    st.sidebar.markdown(f"### 🔮 예상 혜성 생존시간: {estimated_lifetime:.1f}년")
+    st.sidebar.markdown(f"### 🔮 예상 혜성 생존시간: {estimated_lifetime_years:.1f}년")
+    st.sidebar.markdown(f"### ⏱️ 자동 설정 시뮬레이션 기간: {auto_sim_years:.1f}년")
     
-    if estimated_lifetime < sim_years:
-        st.sidebar.warning(f"⚠️ 혜성이 {estimated_lifetime:.1f}년 후 완전히 소멸됩니다!")
+    if estimated_lifetime_years < auto_sim_years * 0.8:
+        st.sidebar.warning(f"⚠️ 혜성이 {estimated_lifetime_years:.1f}년 후 완전히 소멸됩니다!")
     
     # 현재 설정 표시
     st.sidebar.markdown("### 📊 현재 설정값")
     st.sidebar.write(f"**항성 질량:** {star_mass:.1f} 태양질량")
     st.sidebar.write(f"**혜성 질량:** {comet_mass:.1e} kg")
-    st.sidebar.write(f"**이심률:** {initial_eccentricity:.2f}")
-    st.sidebar.write(f"**긴반지름:** {semi_major_axis:.1f} AU")
+    st.sidebar.write(f"**이심률:** {eccentricity:.2f} ({orbit_type})")
+    st.sidebar.write(f"**{distance_label.split('(')[0].strip()}:** {semi_major_axis:.1f} AU")
     st.sidebar.write(f"**질량소실률:** {mass_loss_rate:.1e} kg/s")
-    st.sidebar.write(f"**시뮬레이션 기간:** {sim_years} 년")
     
     # 시뮬레이션 실행
     if st.sidebar.button("🚀 시뮬레이션 시작", type="primary"):
-        # 시뮬레이터 초기화
         simulator = CometOrbitSimulator(
             star_mass=star_mass,
             comet_mass=comet_mass,
-            initial_eccentricity=initial_eccentricity,
+            eccentricity=eccentricity,
             semi_major_axis=semi_major_axis,
             mass_loss_rate=mass_loss_rate
         )
         
-        # 시뮬레이션 데이터 생성
-        total_time = sim_years * YEAR
+        total_time = auto_sim_years * YEAR
         time_steps = 1000
         
         with st.spinner("시뮬레이션 계산 중..."):
-            times, positions, eccentricities, masses = simulator.generate_orbit_data(total_time, time_steps)
+            times, positions, masses = simulator.generate_orbit_data(total_time, time_steps)
         
-        # 혜성 소멸 여부 확인
         if simulator.is_extinct:
-            st.warning(f"🔥 **혜성이 {simulator.extinction_time/YEAR:.1f}년 후 완전히 소멸되었습니다!**")
+            extinction_time_years = len(positions) * auto_sim_years / time_steps
+            st.warning(f"🔥 **혜성이 {extinction_time_years:.1f}년 후 완전히 소멸되었습니다!**")
         
         # 결과 표시
         col1, col2 = st.columns([2, 1])
@@ -260,10 +325,9 @@ def main():
         with col1:
             st.subheader("🌍 궤도 애니메이션")
             
-            # 궤도 애니메이션 생성
             fig = go.Figure()
             
-            # 항성 추가
+            # 항성
             fig.add_trace(go.Scatter(
                 x=[0], y=[0],
                 mode='markers',
@@ -272,7 +336,7 @@ def main():
                 hovertemplate='<b>항성</b><br>질량: %.1f 태양질량<extra></extra>' % star_mass
             ))
             
-            # 궤도 경로 추가
+            # 궤도 경로
             x_pos = [pos[0]/AU for pos in positions]
             y_pos = [pos[1]/AU for pos in positions]
             
@@ -280,13 +344,13 @@ def main():
                 x=x_pos, y=y_pos,
                 mode='lines',
                 line=dict(color='lightblue', width=2),
-                name='궤도 경로',
-                hovertemplate='궤도 경로<extra></extra>'
+                name=f'{orbit_type} 경로',
+                hovertemplate=f'{orbit_type} 경로<extra></extra>'
             ))
             
-            # 혜성 위치 (애니메이션)
+            # 애니메이션 프레임 생성
             frames = []
-            for i in range(0, len(positions), max(1, len(positions)//100)):  # 100 프레임으로 제한
+            for i in range(0, len(positions), max(1, len(positions)//100)):
                 frame_data = []
                 
                 # 항성
@@ -305,26 +369,25 @@ def main():
                     name='궤도 경로'
                 ))
                 
-                # 혜성 현재 위치 (질량이 0이 아닐 때만 표시)
+                # 혜성 현재 위치
                 if masses[i] > 0:
-                    comet_size = max(8, 20 * masses[i] / comet_mass)  # 질량에 따른 크기 변화
-                    comet_color = 'red' if masses[i] > comet_mass * 0.1 else 'orange'  # 질량에 따른 색상 변화
+                    comet_size = max(8, 20 * masses[i] / comet_mass)
+                    comet_color = 'red' if masses[i] > comet_mass * 0.1 else 'orange'
                     
                     frame_data.append(go.Scatter(
                         x=[x_pos[i]], y=[y_pos[i]],
                         mode='markers',
                         marker=dict(size=comet_size, color=comet_color, symbol='circle'),
                         name='혜성',
-                        hovertemplate=f'<b>혜성</b><br>시간: {times[i]/YEAR:.1f}년<br>질량: {masses[i]:.2e} kg<br>이심률: {eccentricities[i]:.3f}<extra></extra>'
+                        hovertemplate=f'<b>혜성</b><br>시간: {times[i]/YEAR:.1f}년<br>질량: {masses[i]:.2e} kg<extra></extra>'
                     ))
                 else:
-                    # 혜성이 소멸된 경우 소멸 위치에 X 표시
                     frame_data.append(go.Scatter(
                         x=[x_pos[i]], y=[y_pos[i]],
                         mode='markers',
                         marker=dict(size=15, color='gray', symbol='x'),
                         name='소멸된 혜성',
-                        hovertemplate=f'<b>혜성 소멸</b><br>시간: {times[i]/YEAR:.1f}년<br>질량: 0 kg<extra></extra>'
+                        hovertemplate=f'<b>혜성 소멸</b><br>시간: {times[i]/YEAR:.1f}년<extra></extra>'
                     ))
                 
                 frames.append(go.Frame(data=frame_data, name=str(i)))
@@ -332,22 +395,29 @@ def main():
             fig.frames = frames
             
             # 레이아웃 설정
+            max_distance = max(max(abs(x) for x in x_pos), max(abs(y) for y in y_pos)) * 1.2
+            
             fig.update_layout(
-                title="혜성 궤도 시뮬레이션",
+                title=f"혜성 {orbit_type} 시뮬레이션 (e={eccentricity:.2f})",
                 xaxis_title="거리 (AU)",
                 yaxis_title="거리 (AU)",
                 showlegend=True,
                 width=700,
                 height=600,
-                xaxis=dict(scaleanchor="y", scaleratio=1),
+                xaxis=dict(
+                    scaleanchor="y", 
+                    scaleratio=1,
+                    range=[-max_distance, max_distance]
+                ),
+                yaxis=dict(
+                    range=[-max_distance, max_distance]
+                ),
                 plot_bgcolor='rgba(0,0,0,0.05)',
                 updatemenus=[{
                     'type': 'buttons',
                     'showactive': False,
                     'x': 0.1,
                     'y': 0,
-                    'xanchor': 'right',
-                    'yanchor': 'top',
                     'buttons': [
                         {
                             'label': '▶️ 재생',
@@ -374,25 +444,7 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            st.subheader("📈 궤도 변화 분석")
-            
-            # 이심률 변화 그래프
-            fig_ecc = go.Figure()
-            fig_ecc.add_trace(go.Scatter(
-                x=[t/YEAR for t in times],
-                y=eccentricities,
-                mode='lines',
-                name='이심률',
-                line=dict(color='green', width=3)
-            ))
-            fig_ecc.update_layout(
-                title="이심률 변화",
-                xaxis_title="시간 (년)",
-                yaxis_title="이심률",
-                height=300,
-                showlegend=False
-            )
-            st.plotly_chart(fig_ecc, use_container_width=True)
+            st.subheader("📈 질량 변화")
             
             # 질량 변화 그래프
             fig_mass = go.Figure()
@@ -407,21 +459,32 @@ def main():
                 title="혜성 질량 변화",
                 xaxis_title="시간 (년)",
                 yaxis_title="질량 (kg)",
-                height=300,
+                height=400,
                 showlegend=False
             )
             st.plotly_chart(fig_mass, use_container_width=True)
+            
+            # 궤도 정보
+            st.subheader("📊 궤도 정보")
+            st.markdown(f"""
+            **궤도 타입:** {orbit_type}
+            **이심률:** {eccentricity:.3f}
+            **궤도 분류:**
+            - 0.0: 완전한 원궤도
+            - 0.0 < e < 1.0: 타원궤도
+            - e = 1.0: 포물선궤도 (탈출 궤도)
+            - e > 1.0: 쌍곡선궤도 (탈출 궤도)
+            """)
         
-        # 시뮬레이션 결과 요약
+        # 결과 요약
         st.subheader("📊 시뮬레이션 결과 요약")
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric(
-                "최종 이심률",
-                f"{eccentricities[-1]:.3f}",
-                f"{eccentricities[-1] - initial_eccentricity:.3f}"
+                "궤도 이심률",
+                f"{eccentricity:.3f}"
             )
         
         with col2:
@@ -444,70 +507,36 @@ def main():
                 "실제 시뮬레이션 시간",
                 f"{actual_sim_time:.1f} 년"
             )
-        
-        # 물리학적 해석
-        st.subheader("🔬 물리학적 해석")
-        
-        if simulator.is_extinct:
-            interpretation = f"""
-            **🔥 혜성 완전 소멸:**
-            - 혜성이 {simulator.extinction_time/YEAR:.1f}년 후 완전히 소멸되었습니다.
-            - 총 {mass_loss_percent:.1f}%의 질량을 잃고 사라졌습니다.
-            - 소멸 직전 궤도 이심률: {eccentricities[-1]:.3f}
-            
-            **물리학적 의미:**
-            - 질량이 0이 되면 물체가 존재하지 않으므로 궤도 운동도 불가능합니다.
-            - 실제 혜성은 태양 근처에서 얼음이 승화되어 이런 과정을 겪습니다.
-            - 이것이 혜성의 생명주기입니다.
-            """
-        else:
-            interpretation = f"""
-            **질량 소실 효과:**
-            - 혜성이 {mass_loss_percent:.1f}%의 질량을 잃었습니다.
-            - 이로 인해 궤도 이심률이 {eccentricities[-1] - initial_eccentricity:.3f} 증가했습니다.
-            - 질량 소실은 태양풍 압력에 대한 민감도를 증가시켜 궤도를 불안정하게 만듭니다.
-            
-            **현재 상태:**
-            - 혜성은 아직 존재하며 궤도 운동을 계속합니다.
-            - 현재 질량: {masses[-1]:.2e} kg
-            - 최종 이심률: {eccentricities[-1]:.3f}
-            """
-        
-        st.markdown(interpretation)
     
-    # 도움말 섹션
+    # 도움말
     st.sidebar.markdown("---")
     st.sidebar.subheader("📚 도움말")
     st.sidebar.markdown("""
-    **매개변수 설명:**
-    - **항성 질량**: 중심별의 질량 (태양 = 1.0)
-    - **혜성 질량**: 혜성의 초기 질량 (일반적으로 10¹²kg)
-    - **이심률**: 0=원궤도, 1에 가까울수록 타원궤도
-    - **긴반지름**: 궤도 타원의 가장 긴 반지름
-    - **질량 소실률**: 혜성이 초당 잃는 질량
+    **궤도 이심률 가이드:**
+    - **0.0**: 완전한 원궤도
+    - **0.0 < e < 1.0**: 타원궤도 (행성/혜성)
+    - **e = 1.0**: 포물선궤도 (탈출속도)
+    - **e > 1.0**: 쌍곡선궤도 (항성간 천체)
     
-    **물리학적 기반:**
-    - 케플러 궤도역학 사용
-    - 질량이 0이 되면 혜성 소멸
-    - 소멸 후에는 궤도 운동 불가
+    **수학적 정확성:**
+    - 케플러의 궤도역학 법칙 적용
+    - 뉴턴 방법으로 궤도 방정식 해결
+    - 타원/포물선/쌍곡선 궤도 모두 지원
     """)
     
-    # 정보 섹션
+    # 정보
     st.markdown("---")
     st.markdown("### ℹ️ 시뮬레이션 정보")
     st.markdown("""
-    이 시뮬레이션은 혜성의 질량 소실이 궤도에 미치는 영향을 보여줍니다.
-    **중요한 물리학적 특징:**
+    **수학적으로 정확한 케플러 궤도:**
+    - 타원 궤도 (e < 1): 케플러 방정식 사용
+    - 포물선 궤도 (e = 1): 바커 방정식 사용  
+    - 쌍곡선 궤도 (e > 1): 쌍곡선 케플러 방정식 사용
     
-    🔥 **혜성 소멸 조건:**
-    - 질량이 0이 되면 혜성이 완전히 소멸됩니다
-    - 소멸 후에는 더 이상 궤도 운동을 하지 않습니다
-    - 이는 실제 혜성의 생명주기를 정확히 반영합니다
-    
-    **제한사항:**
-    - 이체 문제로 단순화 (다른 행성의 영향 무시)
-    - 상대론적 효과 무시
-    - 비등방적 질량 소실 효과 단순화
+    **물리적 특징:**
+    - 질량 소실은 궤도에 영향을 주지 않음 (실제로도 미미함)
+    - 궤도는 초기 조건에만 의존
+    - 혜성은 질량이 0이 되면 소멸
     """)
 
 if __name__ == "__main__":
